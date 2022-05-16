@@ -1,5 +1,4 @@
-from copyreg import pickle
-
+import pickle
 
 class ProgBar:
 
@@ -136,18 +135,30 @@ class unite_files:
 
 class db_reduction:
 
-    def __init__(self,input_folder,data_output_folder='iteration_data/', target_output_folder='iteration_target/',n_iterations = 33,maintained_percent=0.3):
+    def __init__(self,input_folder,data_output_folder='iteration_data/', target_output_folder='iteration_target/',n_iterations = 33,maintained_percent=0.3, timeseries_reduction=0.4):
         
         import glob
+        import os
 
         self.file_list = glob.glob(input_folder+'*')
         self.file_list.sort()
 
         self.input_folder = input_folder
-        self.target_output_folder = target_output_folder
+
+        if not os.path.exists(data_output_folder):
+            print(f"Creating '{data_output_folder}' folder")
+            os.mkdir(data_output_folder)
         self.data_output_folder = data_output_folder
+    
+        if not os.path.exists(target_output_folder):
+            print(f"Creating '{target_output_folder}' folder")
+            os.mkdir(target_output_folder)
+        
+        self.target_output_folder = target_output_folder
         self.maintained_percent = maintained_percent
         self.n_iterations = n_iterations
+
+        self.timeseries_reduction = timeseries_reduction
 
     def transform(self):
 
@@ -166,14 +177,17 @@ class db_reduction:
 
                 expanded_dimensions = data.reshape(n_ids, n_measures, 8)
 
+                new_n_measures = int(self.timeseries_reduction * n_measures)
+                expanded_dimensions = expanded_dimensions[:, :new_n_measures, :]
+
                 aux,reduced_data = train_test_split(expanded_dimensions,test_size=self.maintained_percent,
                                                     shuffle=False)
                 
                 n_ids = len(np.unique(reduced_data[:,0]))
                 
-                reduced_data = reduced_data.reshape(len(reduced_data)*n_measures, 8)
+                reduced_data = reduced_data.reshape(len(reduced_data)*new_n_measures, 8)
 
-                del data
+                del data, expanded_dimensions
                 del aux
 
                 if j < 12:
@@ -222,3 +236,85 @@ class db_reduction:
                             self.maintained_percent,i
                             ), "wb"), 
                             )
+
+class sliding_window():
+    def __init__ (self, data_input_folder, target_input_folder, data_output_folder='sliding_window_data/', target_output_folder='sliding_window_target/', step=100, size=1000):
+        import glob
+        import os
+
+        self.step = step
+        self.size = size
+
+        self.file_list = glob.glob(data_input_folder+'*')
+        self.file_list.sort()
+
+        self.target_list = glob.glob(target_input_folder+'*')
+        self.target_list.sort()
+        
+        if not os.path.exists(data_output_folder):
+            print(f"Creating '{data_output_folder}' folder")
+            os.mkdir(data_output_folder)
+        self.data_output_folder = data_output_folder
+    
+        if not os.path.exists(target_output_folder):
+            print(f"Creating '{target_output_folder}' folder")
+            os.mkdir(target_output_folder)
+        self.target_output_folder = target_output_folder
+
+    def transform(self):
+        import numpy as np
+        import pickle
+
+        bar = ProgBar(len(self.file_list),"Creating windows...")
+
+        for data_path, target_path in zip(self.file_list, self.target_list):
+            data = pickle.load(open(data_path, "rb"))
+            target = pickle.load(open(target_path, "rb"))
+
+            data_file_name = data_path.split('/')[-1].split('.p')[0]
+            target_file_name = target_path.split('/')[-1].split('.p')[0]
+
+            L, W = data.shape
+
+            n_measures = int(np.max(data[:, 1]))
+            n_ids = L//n_measures
+
+            expanded_dimensions = data.reshape(n_ids, n_measures, W)
+            
+            del data
+
+            for i, inicio in enumerate(range(0,n_ids - self.size, self.step)):
+                data_window = expanded_dimensions[inicio:inicio+self.size, :, :]
+
+                target_window = target[inicio:inicio+self.size]
+
+                data_window = data_window.reshape(self.size*n_measures, W)
+
+                pickle.dump(data_window,
+                        open(self.data_output_folder + data_file_name + '__window_{}__.pkl'.format(i), "wb"), 
+                            )
+
+                pickle.dump(target_window,
+                        open(self.target_output_folder + target_file_name + '__window_{}__.pkl'.format(i), "wb"), 
+                            )
+            
+            if inicio + self.size != n_ids:
+                i += 1
+                data_window = expanded_dimensions[-self.size:, :, :]
+
+                target_window = target[-self.size:]
+
+                data_window = data_window.reshape(self.size*n_measures, W)
+
+                pickle.dump(data_window,
+                        open(self.data_output_folder + data_file_name + '__window_{}__.pkl'.format(i), "wb"), 
+                            )
+
+                pickle.dump(target_window,
+                        open(self.target_output_folder + target_file_name + '__window_{}__.pkl'.format(i), "wb"), 
+                            )
+            
+            bar.update()
+
+
+
